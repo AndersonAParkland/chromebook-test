@@ -1,0 +1,196 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Chromebook Hardware Fleet Test</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            background-color: #f5f5f7;
+            color: #1d1d1f;
+            margin: 0;
+            padding: 15px;
+        }
+        .container {
+            max-width: 800px;
+            margin: 0 auto;
+            background: white;
+            padding: 20px;
+            border-radius: 12px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.05);
+        }
+        h2 {
+            color: #0071e3;
+            margin-top: 0;
+            border-bottom: 2px solid #f5f5f7;
+            padding-bottom: 10px;
+        }
+        .section {
+            margin-bottom: 25px;
+            padding: 15px;
+            border: 1px solid #e5e5e7;
+            border-radius: 8px;
+            background: #fafafa;
+        }
+        h3 { margin-top: 0; color: #333; }
+        button {
+            background-color: #0071e3;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            font-size: 14px;
+            font-weight: 600;
+            border-radius: 6px;
+            cursor: pointer;
+            transition: background 0.2s;
+        }
+        button:hover { background-color: #005bb5; }
+        video {
+            width: 100%;
+            max-width: 400px;
+            height: 225px;
+            background: #000;
+            border-radius: 6px;
+            margin-top: 10px;
+            display: block;
+        }
+        .meter-container {
+            margin-top: 10px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        meter {
+            flex-grow: 1;
+            height: 20px;
+        }
+        .alert-box {
+            background-color: #e8f0fe;
+            border-left: 4px solid #1a73e8;
+            padding: 10px;
+            border-radius: 4px;
+            font-size: 13px;
+            margin-top: 15px;
+        }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <h2>Chromebook Hardware Verification</h2>
+
+    <div class="section">
+        <h3>1. Audio Output Test (Speakers / Headphones)</h3>
+        <p>Plug in headphones (if testing jack) and click the button. You should hear a LOW beep on the LEFT, then a HIGH beep on the RIGHT.</p>
+        <button onclick="testStereoAudio()">Play Stereo Test Tone</button>
+    </div>
+
+    <div class="section">
+        <h3>2. Camera & Microphone Test</h3>
+        <p>Click below to authorize and initialize the webcam and microphone capture.</p>
+        <button onclick="startCameraAndMic()">Initialize Cam & Mic</button>
+        <video id="webcamPreview" autoplay playsinline muted></video>
+        
+        <div class="meter-container">
+            <label for="micLevel"><strong>Mic Level:</strong></label>
+            <meter id="micLevel" min="0" max="100" value="0"></meter>
+        </div>
+    </div>
+
+    <div class="section">
+        <h3>3. Keyboard, Touchpad, & Touchscreen</h3>
+        <p>ChromeOS has a built-in diagnostic test environment for inputs.</p>
+        <div class="alert-box">
+            <strong>Shortcut:</strong> Press <strong>Ctrl + Search (Magnifying Glass) + Esc</strong> to instantly open the Native Diagnostics App, then click "Input" on the left menu to sweep the keyboard and trackpad.
+        </div>
+    </div>
+</div>
+
+<script>
+    let audioCtx = null;
+
+    function initAudioContext() {
+        if (!audioCtx) {
+            audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        }
+    }
+
+    // Generates localized beeps without requiring external audio files
+    function testStereoAudio() {
+        initAudioContext();
+        if (audioCtx.state === 'suspended') {
+            audioCtx.resume();
+        }
+
+        // --- LEFT CHANNEL (Low Tone) ---
+        let oscL = audioCtx.createOscillator();
+        let gainL = audioCtx.createGain();
+        let pannerL = audioCtx.createStereoPanner();
+        
+        pannerL.pan.setValueAtTime(-1, audioCtx.currentTime); // Hard Left
+        oscL.frequency.setValueAtTime(330, audioCtx.currentTime); // 330Hz
+        
+        oscL.connect(gainL).connect(pannerL).connect(audioCtx.destination);
+        gainL.gain.setValueAtTime(0.4, audioCtx.currentTime);
+        
+        oscL.start();
+        oscL.stop(audioCtx.currentTime + 0.4);
+
+        // --- RIGHT CHANNEL (High Tone, Delays by 0.5s) ---
+        setTimeout(() => {
+            let oscR = audioCtx.createOscillator();
+            let gainR = audioCtx.createGain();
+            let pannerR = audioCtx.createStereoPanner();
+            
+            pannerR.pan.setValueAtTime(1, audioCtx.currentTime); // Hard Right
+            oscR.frequency.setValueAtTime(660, audioCtx.currentTime); // 660Hz
+            
+            oscR.connect(gainR).connect(pannerR).connect(audioCtx.destination);
+            gainR.gain.setValueAtTime(0.4, audioCtx.currentTime);
+            
+            oscR.start();
+            oscR.stop(audioCtx.currentTime + 0.4);
+        }, 500);
+    }
+
+    // Activates webcam and maps mic frequencies to a visualizer meter
+    async function startCameraAndMic() {
+        initAudioContext();
+        try {
+            const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+            
+            // Set video stream
+            const video = document.getElementById('webcamPreview');
+            video.srcObject = stream;
+
+            // Set up audio analyzer for the microphone meter
+            const source = audioCtx.createMediaStreamSource(stream);
+            const analyser = audioCtx.createAnalyser();
+            analyser.fftSize = 64;
+            source.connect(analyser);
+            
+            const dataArray = new Uint8Array(analyser.frequencyBinCount);
+            const meter = document.getElementById('micLevel');
+
+            function updateMicMeter() {
+                analyser.getByteFrequencyData(dataArray);
+                let total = 0;
+                for (let i = 0; i < dataArray.length; i++) {
+                    total += dataArray[i];
+                }
+                let average = total / dataArray.length;
+                
+                // Map the average volume to the meter value
+                meter.value = average * 1.5; 
+                requestAnimationFrame(updateMicMeter);
+            }
+            updateMicMeter();
+
+        } catch (err) {
+            alert("Error accessing media devices. Ensure permissions are granted.\n" + err);
+        }
+    }
+</script>
+
+</body>
+</html>
